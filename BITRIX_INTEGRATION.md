@@ -87,6 +87,11 @@ clasp deploy --description "Bitrix24 Integration v1"
 https://script.google.com/macros/s/{DEPLOY_ID}/exec
 ```
 
+**ВАШ ТЕКУЩИЙ URL:**
+```
+https://script.google.com/macros/s/AKfycbyjJDkB9_8W8rQKhADQXllx9doq82rFl5o2GUOt_qECzdk_HIyaoY5uJtbACW4A1RzE/exec
+```
+
 ---
 
 ## 🔧 Настройка Битрикс24

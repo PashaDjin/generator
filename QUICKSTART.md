@@ -38,7 +38,10 @@ clasp deploy --description "Bitrix24 Integration v1"
 - Запуск от имени: **Я**
 - Доступ: **Все**
 
-**Скопируй URL:** `https://script.google.com/macros/s/{DEPLOY_ID}/exec`
+**ВАШ URL ВЕБА:**
+```
+https://script.google.com/macros/s/AKfycbyjJDkB9_8W8rQKhADQXllx9doq82rFl5o2GUOt_qECzdk_HIyaoY5uJtbACW4A1RzE/exec
+```
 
 ---
 
@@ -64,7 +67,7 @@ clasp deploy --description "Bitrix24 Integration v1"
 
 **Настройки:**
 - Название: `Создание сметы`
-- URL: `{СКОПИРОВАННЫЙ URL ИЗ GAS}`
+- URL: `https://script.google.com/macros/s/AKfycbyjJDkB9_8W8rQKhADQXllx9doq82rFl5o2GUOt_qECzdk_HIyaoY5uJtbACW4A1RzE/exec`
 - Событие: `При обновлении сделки`
 - Фильтр: Стадия = "Делаем смету"
 
