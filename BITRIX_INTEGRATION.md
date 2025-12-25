@@ -15,26 +15,47 @@
 ```
 ┌─────────────┐         POST запрос          ┌──────────────────┐
 │  Битрикс24  │ ──────────────────────────>  │  Google Apps     │
-│   (Сделка)  │   {client, address, phone}   │     Script       │
+│   (Сделка)  │   {bitrixDealId, client,     │     Script       │
+│             │    address, phone}            │                  │
 └─────────────┘                               └──────────────────┘
       ▲                                              │
+      │                                              │ ID сделки → UID
       │                                              │ Создаёт:
       │                                              │ • Папку клиента
-      │                                              │ • Смету (копия шаблона)
-      │          Ответ с результатом                 │ • Выдаёт доступы
+      │                                              │ • Смету (копия)
+      │                                              │ • Выдаёт доступы
+      │       Ответ с результатом                    │ • Обновляет ОБЪЕКТЫ
       │    {uid, smetaUrl, folderUrl}                │
       └──────────────────────────────────────────────┘
 ```
 
 ### Процесс:
-1. **Битрикс** отправляет данные клиента через вебхук
-2. **GAS** создаёт смету, папку, выдаёт доступы
-3. **GAS** отправляет обратно в Битрикс: UID, ссылки на смету/папку
-4. **Битрикс** обновляет поля сделки полученными данными
+1. **Битрикс** отправляет минимальные данные: ID сделки, клиент, адрес, телефон
+2. **GAS** использует ID сделки как UID (формат: `BITRIX-12345`)
+3. **GAS** создаёт смету, папку, выдаёт доступы
+4. **GAS** отправляет обратно в Битрикс: ссылки на смету/папку
+5. **Битрикс** обновляет поля сделки полученными данными
+
+**ВАЖНО:** Генерация UID через счётчик больше НЕ используется! UID = ID сделки Битрикса.
 
 ---
 
 ## ⚙️ Настройка Google Apps Script
+
+### 0. Настройка конфигурации (ОБЯЗАТЕЛЬНО!)
+
+Открой таблицу и заполни лист **"Тех"**:
+
+| Ячейка | Значение | Описание |
+|--------|----------|----------|
+| **L2** | ID шаблона сметы | ID файла в Google Drive (обязательно!) |
+| **L3** | БРЕНД-МАР / СТРОЙМАТ | Юрлицо по умолчанию |
+| **L4** | Иванов Иван | Менеджер по умолчанию |
+| **L5** | Петров Петр | Замерщик по умолчанию |
+| **L6** | 1abc...xyz | ID папки менеджера в Drive (обязательно!) |
+| **L7** | measurer@example.com | Email замерщика (обязательно!) |
+
+**Обязательные поля (L2, L6, L7)** должны быть заполнены, иначе создание сметы не будет работать!
 
 ### 1. Загрузка кода
 
@@ -102,17 +123,10 @@ https://script.google.com/macros/s/{DEPLOY_ID}/exec
 
 ```json
 {
-  "company": "{=Document:ASSIGNED_BY_ID.UF_DEPARTMENT}",
-  "manager": "{=Document:ASSIGNED_BY_ID.NAME} {=Document:ASSIGNED_BY_ID.LAST_NAME}",
-  "measurer": "{=Document:UF_CRM_MEASURER}",
+  "bitrixDealId": "{=Document:ID}",
   "client": "{=Document:TITLE}",
   "address": "{=Document:UF_CRM_ADDRESS}",
   "phone": "{=Document:PHONE[0].VALUE}",
-  "managerId": "{=Document:ASSIGNED_BY_ID.ID}",
-  "managerFolderId": "{=Document:ASSIGNED_BY_ID.UF_DRIVE_FOLDER}",
-  "measurerEmail": "{=Document:UF_CRM_MEASURER_EMAIL}",
-  "templateId": "{=Template:SMETA_TEMPLATE_ID}",
-  "bitrixDealId": "{=Document:ID}",
   "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/{YOUR_WEBHOOK_TOKEN}/"
 }
 ```
@@ -120,6 +134,25 @@ https://script.google.com/macros/s/{DEPLOY_ID}/exec
 **ВАЖНО:** Замени:
 - `your-domain` — на твой поддомен Битрикс24
 - `{YOUR_WEBHOOK_TOKEN}` — на твой токен входящего вебхука (см. ниже)
+
+**Опционально** (если хочешь переопределить значения из конфига):
+```json
+{
+  "bitrixDealId": "{=Document:ID}",
+  "client": "{=Document:TITLE}",
+  "address": "{=Document:UF_CRM_ADDRESS}",
+  "phone": "{=Document:PHONE[0].VALUE}",
+  
+  "company": "{=Document:ASSIGNED_BY_ID.UF_DEPARTMENT}",
+  "manager": "{=Document:ASSIGNED_BY_ID.NAME} {=Document:ASSIGNED_BY_ID.LAST_NAME}",
+  "measurer": "{=Document:UF_CRM_MEASURER}",
+  "managerFolderId": "{=Document:ASSIGNED_BY_ID.UF_DRIVE_FOLDER}",
+  "measurerEmail": "{=Document:UF_CRM_MEASURER_EMAIL}",
+  "templateId": "{=Template:SMETA_TEMPLATE_ID}",
+  
+  "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/{YOUR_WEBHOOK_TOKEN}/"
+}
+```
 
 #### C. Создание входящего вебхука (для получения ответа)
 
@@ -137,19 +170,36 @@ https://script.google.com/macros/s/{DEPLOY_ID}/exec
 
 ### Запрос ОТ Битрикса В GAS
 
+**МИНИМАЛЬНЫЙ набор (обязательные поля):**
 ```json
 {
-  "company": "БРЕНД-МАР",
-  "manager": "Иванов Иван",
-  "measurer": "Петров Петр",
+  "bitrixDealId": "12345",
   "client": "Сидоров Андрей",
   "address": "Москва, ул. Ленина, д. 10, кв. 5",
   "phone": "89991112233",
-  "managerId": "IV123",
-  "managerFolderId": "1ABC...XYZ",
-  "measurerEmail": "measurer@example.com",
-  "templateId": "1DEF...GHI",
+  "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/webhook_code/"
+}
+```
+
+**ВАЖНО:** 
+- `bitrixDealId` используется как UID (формат: `BITRIX-12345`)
+- Остальные данные (компания, менеджер, замерщик, папка, шаблон) берутся из конфига (лист "Тех")
+
+**Опциональные поля** (если нужно переопределить конфиг):
+```json
+{
   "bitrixDealId": "12345",
+  "client": "Сидоров Андрей",
+  "address": "Москва, ул. Ленина, д. 10, кв. 5",
+  "phone": "89991112233",
+  
+  "company": "СТРОЙМАТ",
+  "manager": "Другой Менеджер",
+  "measurer": "Другой Замерщик",
+  "managerFolderId": "1XYZ...ABC",
+  "measurerEmail": "another@example.com",
+  "templateId": "1GHI...DEF",
+  
   "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/webhook_code/"
 }
 ```
@@ -160,13 +210,14 @@ https://script.google.com/macros/s/{DEPLOY_ID}/exec
 {
   "success": true,
   "data": {
-    "uid": "IV123-42",
+    "uid": "BITRIX-12345",
+    "bitrixDealId": "12345",
     "smetaUrl": "https://docs.google.com/spreadsheets/d/1ABC.../edit",
     "smetaId": "1ABC...XYZ",
     "folderUrl": "https://drive.google.com/drive/folders/1DEF...GHI",
     "action": "CREATE_NEW",
     "status": "Делаем смету",
-    "message": "Смета успешно создана. UID: IV123-42"
+    "message": "Смета успешно создана. UID: BITRIX-12345"
   }
 }
 ```
@@ -174,11 +225,11 @@ https://script.google.com/macros/s/{DEPLOY_ID}/exec
 ### Обновление сделки в Битриксе
 
 GAS автоматически обновляет поля:
-- `UF_CRM_SMETA_UID` = `"IV123-42"`
+- `UF_CRM_SMETA_UID` = `"BITRIX-12345"`
 - `UF_CRM_SMETA_LINK` = `"https://docs.google.com/..."`
 - `UF_CRM_SMETA_ID` = `"1ABC...XYZ"`
 - `UF_CRM_FOLDER_LINK` = `"https://drive.google.com/..."`
-- `COMMENTS` = `"Смета создана автоматически. UID: IV123-42"`
+- `COMMENTS` = `"Смета создана автоматически. UID: BITRIX-12345"`
 
 ---
 
@@ -205,20 +256,13 @@ GAS автоматически обновляет поля:
 Content-Type: application/json
 ```
 
-**Body:**
+**Body (минимальный):**
 ```json
 {
-  "company": "БРЕНД-МАР",
-  "manager": "Иванов Иван",
-  "measurer": "Петров Петр",
+  "bitrixDealId": "12345",
   "client": "Тестовый Клиент",
   "address": "Москва, ул. Тестовая, д. 1",
   "phone": "89991112233",
-  "managerId": "TEST123",
-  "managerFolderId": "1abc...xyz",
-  "measurerEmail": "test@example.com",
-  "templateId": "1def...ghi",
-  "bitrixDealId": "12345",
   "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/webhook/"
 }
 ```
@@ -228,13 +272,14 @@ Content-Type: application/json
 {
   "success": true,
   "data": {
-    "uid": "TEST123-1",
+    "uid": "BITRIX-12345",
+    "bitrixDealId": "12345",
     "smetaUrl": "https://docs.google.com/...",
     "smetaId": "1ABC...",
     "folderUrl": "https://drive.google.com/...",
     "action": "CREATE_NEW",
     "status": "Делаем смету",
-    "message": "Смета успешно создана. UID: TEST123-1"
+    "message": "Смета успешно создана. UID: BITRIX-12345"
   }
 }
 ```
@@ -256,13 +301,12 @@ Content-Type: application/json
 
 | Поле Битрикса | Символьный код | Пример |
 |--------------|----------------|--------|
-| Название сделки | `TITLE` | "Сидоров Андрей" |
-| Адрес | `UF_CRM_ADDRESS` | "Москва, ул. Ленина, д. 10" |
-| Телефон | `PHONE[0].VALUE` | "89991112233" |
-| Ответственный (ID) | `ASSIGNED_BY_ID.ID` | "123" |
-| Замерщик | `UF_CRM_MEASURER` | "Петров Петр" |
-| Email замерщика | `UF_CRM_MEASURER_EMAIL` | "measurer@example.com" |
-| Юрлицо | `ASSIGNED_BY_ID.UF_DEPARTMENT` | "БРЕНД-МАР" |
+| **ID сделки** | `ID` | "12345" |
+| **Название сделки** | `TITLE` | "Сидоров Андрей" |
+| **Адрес** | `UF_CRM_ADDRESS` | "Москва, ул. Ленина, д. 10" |
+| **Телефон** | `PHONE[0].VALUE` | "89991112233" |
+
+**Остальные данные** (компания, менеджер, замерщик, папка, шаблон) берутся из конфига (лист "Тех" → L2-L7).
 
 ### Обновляются АВТОМАТИЧЕСКИ после создания сметы:
 

@@ -9,24 +9,29 @@
  * • sendResultToBitrix() - отправка результата обратно в Битрикс24
  * 
  * АРХИТЕКТУРА:
- * 1. Битрикс отправляет POST с данными клиента
+ * 1. Битрикс отправляет POST с минимальными данными клиента
  * 2. GAS создает смету, папку, выдает доступы
- * 3. GAS отправляет обратно в Битрикс: UID, ссылки на смету/папку
+ * 3. GAS отправляет обратно в Битрикс: ссылки на смету/папку
  * 
- * ФОРМАТ ЗАПРОСА ОТ БИТРИКСА:
+ * ВАЖНО: ID сделки Битрикса используется как UID объекта!
+ * 
+ * ФОРМАТ ЗАПРОСА ОТ БИТРИКСА (МИНИМАЛЬНЫЙ):
+ * {
+ *   "bitrixDealId": "12345",      // ID сделки (используется как UID!)
+ *   "client": "Сидоров Андрей",   // Имя клиента
+ *   "address": "Москва, ул. Ленина, д. 10, кв. 5",
+ *   "phone": "89991112233",       // Телефон
+ *   "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/webhook_code/"
+ * }
+ * 
+ * ОПЦИОНАЛЬНЫЕ ПОЛЯ (если нужно переопределить конфиг):
  * {
  *   "company": "БРЕНД-МАР",
  *   "manager": "Иванов Иван",
  *   "measurer": "Петров Петр",
- *   "client": "Сидоров Андрей",
- *   "address": "Москва, ул. Ленина, д. 10, кв. 5",
- *   "phone": "89991112233",
- *   "managerId": "IV123",
  *   "managerFolderId": "1ABC...XYZ",
  *   "measurerEmail": "measurer@example.com",
- *   "templateId": "1DEF...GHI",
- *   "bitrixDealId": "12345",  // ID сделки в Битриксе
- *   "bitrixWebhookUrl": "https://your-domain.bitrix24.ru/rest/1/webhook_code/"
+ *   "templateId": "1DEF...GHI"
  * }
  */
 
@@ -51,9 +56,8 @@ function doPost(e) {
     
     Logger.log('Получен запрос от Битрикс24: ' + JSON.stringify(payload));
     
-    // Валидация обязательных полей
-    const required = ['company', 'manager', 'measurer', 'client', 'address', 'phone', 
-                      'managerId', 'managerFolderId', 'measurerEmail', 'templateId'];
+    // Валидация ОБЯЗАТЕЛЬНЫХ полей (только минимум!)
+    const required = ['bitrixDealId', 'client', 'address', 'phone'];
     
     for (const field of required) {
       if (!payload[field]) {
@@ -65,7 +69,7 @@ function doPost(e) {
     const result = createEstimateFromBitrix(payload);
     
     // Если указан вебхук Битрикса - отправляем результат обратно
-    if (payload.bitrixWebhookUrl) {
+    if (payload.bitrixWebhookUrl && payload.bitrixDealId) {
       sendResultToBitrix(payload.bitrixWebhookUrl, payload.bitrixDealId, result);
     }
     
@@ -97,6 +101,9 @@ function doPost(e) {
  * Аналог createEstimate(), но данные берутся не из Google Sheets,
  * а из параметров функции (от Битрикс24).
  * 
+ * ВАЖНО: ID сделки Битрикса используется как UID объекта!
+ * Генерация UID через nextUid_() больше НЕ используется.
+ * 
  * @param {Object} data - данные от Битрикса
  * @return {Object} результат создания сметы
  */
@@ -109,30 +116,33 @@ function createEstimateFromBitrix(data) {
   }
 
   try {
-    // Извлекаем данные из параметров
-    const company         = val(data.company);
-    const manager         = val(data.manager);
-    const measurer        = val(data.measurer);
+    // === ОБЯЗАТЕЛЬНЫЕ ДАННЫЕ ===
+    const bitrixDealId    = val(data.bitrixDealId);  // ID сделки = UID!
     const client          = val(data.client);
     const adresRaw        = val(data.address);
     const phoneRaw        = val(data.phone);
-    const managerId       = val(data.managerId);
-    const managerFolderId = val(data.managerFolderId);
-    const measurerEmail   = val(data.measurerEmail);
-    const templateId      = val(data.templateId);
-    const bitrixDealId    = val(data.bitrixDealId || '');
 
-    // Валидация (уже проверено в doPost, но для надёжности)
-    requireFilled(company, 'company (Юрлицо)');
-    requireFilled(manager, 'manager (Менеджер)');
-    requireFilled(measurer, 'measurer (Замерщик)');
+    // Валидация обязательных полей
+    requireFilled(bitrixDealId, 'bitrixDealId (ID сделки)');
     requireFilled(client, 'client (Клиент)');
     requireFilled(adresRaw, 'address (Адрес)');
     requireFilled(phoneRaw, 'phone (Телефон)');
-    requireFilled(managerId, 'managerId (ID менеджера)');
-    requireFilled(managerFolderId, 'managerFolderId (ID папки менеджера)');
-    requireFilled(measurerEmail, 'measurerEmail (Email замерщика)');
-    requireFilled(templateId, 'templateId (ID шаблона сметы)');
+
+    // === ОПЦИОНАЛЬНЫЕ ДАННЫЕ (берём из конфига, если не указаны) ===
+    const techSh = ss.getSheetByName(SHEET_TECH);
+    if (!techSh) throw new Error('Лист "Тех" не найден для чтения конфига.');
+
+    const company         = val(data.company || techSh.getRange('L3').getValue() || '');
+    const manager         = val(data.manager || techSh.getRange('L4').getValue() || '');
+    const measurer        = val(data.measurer || techSh.getRange('L5').getValue() || '');
+    const managerFolderId = val(data.managerFolderId || techSh.getRange('L6').getValue());
+    const measurerEmail   = val(data.measurerEmail || techSh.getRange('L7').getValue());
+    const templateId      = val(data.templateId || techSh.getRange('L2').getValue());
+
+    // Валидация технических полей (должны быть или в запросе, или в конфиге)
+    requireFilled(managerFolderId, 'managerFolderId (ID папки менеджера) - укажи в Тех!L6');
+    requireFilled(measurerEmail, 'measurerEmail (Email замерщика) - укажи в Тех!L7');
+    requireFilled(templateId, 'templateId (ID шаблона сметы) - укажи в Тех!L2');
 
     // Нормализация телефона
     let phoneNorm;
@@ -144,24 +154,39 @@ function createEstimateFromBitrix(data) {
     
     const address = normAddr_(adresRaw);
 
-    // === ПРОВЕРКА ДУБЛИКАТОВ ===
+    // === UID = ID СДЕЛКИ БИТРИКСА ===
+    const uid = `BITRIX-${bitrixDealId}`;  // Формат: BITRIX-12345
+    
+    Logger.log(`UID (из Битрикса): ${uid}`);
+
+    // === ПРОВЕРКА ДУБЛИКАТОВ (по телефону и адресу, НЕ по UID) ===
     const shObj = ensureObjectsSheet_(ss);
     removeFilterSafe_(shObj);
     
-    const uidResult = findOrCreateObjectUid_({
-      sheet: shObj,
-      managerId: managerId,
-      rawAddress: adresRaw,
-      phoneNorm: phoneNorm,
-      client: client,
-      autoCreate: true
-    });
+    // Ищем существующий объект по телефону/адресу
+    let row = findRowByPhoneAndNormalizedAddress_(shObj, phoneNorm, address);
+    let action = 'CREATE_NEW';
     
-    const uid = uidResult.uid;
-    const action = uidResult.action;
-    const existingRow = uidResult.existingRow;
-    
-    Logger.log(`UID: ${uid}, Action: ${action}, Row: ${existingRow}`);
+    if (row) {
+      // Найден объект с таким же телефоном и адресом
+      const existingUid = String(shObj.getRange(row, COL.A_UID).getValue() || '').trim();
+      
+      if (existingUid && existingUid !== uid) {
+        // Есть другой UID - обновляем на новый
+        Logger.log(`Найден объект с UID=${existingUid}, обновляем на ${uid}`);
+        action = 'OVERWRITE';
+      } else if (existingUid === uid) {
+        // Уже есть с тем же UID
+        Logger.log(`Объект с UID=${uid} уже существует`);
+        action = 'USE_OLD';
+      }
+    } else {
+      // Ищем по UID (вдруг уже есть объект с таким ID сделки)
+      row = findRowByUid_(shObj, uid);
+      if (row) {
+        action = 'USE_OLD';
+      }
+    }
 
     // === СОЗДАНИЕ ПАПКИ И СМЕТЫ ===
     const clientFolder = findOrCreateClientFolderByUID_(managerFolderId, uid, address, client);
@@ -178,20 +203,15 @@ function createEstimateFromBitrix(data) {
     addEditors_(smetaFile, [measurerEmail, ALWAYS_EDITOR]);
 
     // === ЗАПИСЬ/ОБНОВЛЕНИЕ В ОБЪЕКТЫ ===
-    let row;
-    
-    if (action === 'USE_OLD') {
-      row = existingRow;
+    if (!row) {
+      // Создаём новую строку
+      row = createEmptyObjectRowWithUid_(shObj, uid, { client, phoneNorm, addrNorm: address });
     } else if (action === 'OVERWRITE') {
-      row = existingRow;
+      // Обновляем UID, имя, телефон, адрес
+      shObj.getRange(row, COL.A_UID).setValue(uid);
       shObj.getRange(row, COL.A_CLIENT).setValue(client);
       shObj.getRange(row, COL.B_PHONE).setValue(phoneNorm);
       shObj.getRange(row, COL.C_ADDR).setValue(address);
-    } else {
-      row = findRowByUid_(shObj, uid);
-      if (!row) {
-        row = createEmptyObjectRowWithUid_(shObj, uid, { client, phoneNorm, addrNorm: address });
-      }
     }
 
     // Обновляем поля
@@ -205,12 +225,6 @@ function createEstimateFromBitrix(data) {
     shObj.getRange(row, COL.O_FOLDER).setValue(folderUrl);
     setIfProvided_(shObj, row, COL.L_SMETA_ID, smetaId);
     setIfProvided_(shObj, row, COL.M_EST_ID, uid);
-    
-    // Сохраняем ID сделки Битрикса (если есть свободная колонка)
-    // Можно добавить новую колонку COL.S_BITRIX_DEAL_ID в конфиг
-    if (bitrixDealId) {
-      // shObj.getRange(row, COL.S_BITRIX_DEAL_ID).setValue(bitrixDealId);
-    }
 
     // === ЗЕРКАЛО В ТРАНЗИТ ===
     mirrorEstimateToTransitByUid_({
@@ -226,6 +240,7 @@ function createEstimateFromBitrix(data) {
     // Возвращаем результат для отправки в Битрикс
     return {
       uid: uid,
+      bitrixDealId: bitrixDealId,
       smetaUrl: smetaUrl,
       smetaId: smetaId,
       folderUrl: folderUrl,
@@ -272,12 +287,11 @@ function sendResultToBitrix(webhookUrl, dealId, result) {
     const payload = {
       id: dealId,
       fields: {
-        'UF_CRM_SMETA_UID': result.uid,           // UID объекта
+        'UF_CRM_SMETA_UID': result.uid,           // UID объекта (BITRIX-12345)
         'UF_CRM_SMETA_LINK': result.smetaUrl,     // Ссылка на смету
         'UF_CRM_SMETA_ID': result.smetaId,        // ID файла сметы
         'UF_CRM_FOLDER_LINK': result.folderUrl,   // Ссылка на папку клиента
-        'STAGE_ID': 'C5:PREPARATION',             // Стадия "Делаем смету" (опционально)
-        'COMMENTS': `Смета создана автоматически. UID: ${result.uid}\n${result.message}`
+        'COMMENTS': `Смета создана автоматически.\nUID: ${result.uid}\n${result.message}`
       }
     };
 
@@ -322,20 +336,32 @@ function sendResultToBitrix(webhookUrl, dealId, result) {
  * testWebhook() - функция для тестирования вебхука вручную
  * 
  * Запускается через редактор Apps Script для проверки работы.
+ * 
+ * ВАЖНО: Перед запуском заполни в листе "Тех":
+ * • L2 - ID шаблона сметы
+ * • L3 - Юрлицо (БРЕНД-МАР / СТРОЙМАТ)
+ * • L4 - Менеджер (имя)
+ * • L5 - Замерщик (имя)
+ * • L6 - ID папки менеджера в Google Drive
+ * • L7 - Email замерщика
  */
 function testWebhook() {
   const testData = {
-    company: 'БРЕНД-МАР',
-    manager: 'Иванов Иван Иванович',
-    measurer: 'Петров Петр Петрович',
-    client: 'Тестовый Клиент',
-    address: 'Москва, ул. Тестовая, д. 1, кв. 1',
-    phone: '89991112233',
-    managerId: 'TEST123',
-    managerFolderId: '1abc...xyz',  // Замени на реальный ID папки
-    measurerEmail: 'test@example.com',
-    templateId: '1def...ghi',       // Замени на реальный ID шаблона
-    bitrixDealId: '12345',
+    // === ОБЯЗАТЕЛЬНЫЕ ПОЛЯ (от Битрикса) ===
+    bitrixDealId: '12345',                        // ID сделки в Битриксе
+    client: 'Тестовый Клиент',                    // Имя клиента
+    address: 'Москва, ул. Тестовая, д. 1, кв. 1', // Адрес
+    phone: '89991112233',                         // Телефон
+    
+    // === ОПЦИОНАЛЬНЫЕ ПОЛЯ (можно указать или взять из конфига Тех!L3-L7) ===
+    // company: 'БРЕНД-МАР',
+    // manager: 'Иванов Иван',
+    // measurer: 'Петров Петр',
+    // managerFolderId: '1abc...xyz',
+    // measurerEmail: 'test@example.com',
+    // templateId: '1def...ghi',
+    
+    // === ДЛЯ ОТПРАВКИ РЕЗУЛЬТАТА ОБРАТНО ===
     bitrixWebhookUrl: 'https://your-domain.bitrix24.ru/rest/1/webhook_code/'
   };
 
